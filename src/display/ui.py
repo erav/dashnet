@@ -7,7 +7,6 @@ from . import ui_state
 from .components import header_details
 from .components.help_text import HelpText
 from .components.layout import Layout
-from .components.table import Table
 from network import connection
 
 
@@ -95,16 +94,16 @@ class Ui:
     def get_tables_to_display(self):
         children = list()
         if self._opts.processes:
-            children.append(Table.create_processes_table(self._ui_state))
+            children.append(self._ui_state.create_processes_table())
         if self._opts.addresses:
-            children.append(Table.create_remote_addresses_table(self._ui_state, self._ip_to_host))
+            children.append(self._ui_state.create_remote_addresses_table(self._ip_to_host))
         if self._opts.connections:
-            children.append(Table.create_connections_table(self._ui_state, self._ip_to_host))
+            children.append(self._ui_state.create_connections_table(self._ip_to_host))
         if not (self._opts.processes or self._opts.addresses or self._opts.connections):
             children = [
-                Table.create_processes_table(self._ui_state) +
-                Table.create_remote_addresses_table(self._ui_state, self._ip_to_host) +
-                Table.create_connections_table(self._ui_state, self._ip_to_host)
+                self._ui_state.create_processes_table() +
+                self._ui_state.create_remote_addresses_table(self._ip_to_host) +
+                self._ui_state.create_connections_table(self._ip_to_host)
             ]
         return children
 
