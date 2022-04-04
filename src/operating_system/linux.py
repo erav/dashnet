@@ -18,7 +18,6 @@ class OpenSockets:
         self._processes = ProcessLoader()
         self._procfs = InodeLoader()
         self._connections = ConnectionLoader()
-        self.socket_formatter = connection.LocalSocketsFormatter()
         self._local_open_sockets = {}
         self._remote_open_sockets = {}
         self._inodes_to_pid = {}
@@ -40,9 +39,12 @@ class OpenSockets:
         self._add_connections_to_open_sockets(self._connections.tcps, ConnectionLoader.TCP)
         self._add_connections_to_open_sockets(self._connections.udps, ConnectionLoader.UDP)
         self._filter_localhost()
-        self._socket_formatter.format(self._local_open_sockets)
-        self._create_process_with_local_sockets_list()
-        self._create_local_socket_count_by_process_list()
+        if not self._local_open_sockets:
+            self._process_with_local_sockets_list.append('<NO TRAFFIC DETECTED>')
+            self._local_socket_count_by_process_list.append('<NO TRAFFIC DETECTED>')
+        else:
+            self._create_process_with_local_sockets_list()
+            self._create_local_socket_count_by_process_list()
         return self
 
     def _load_open_sockets(self):
@@ -63,16 +65,32 @@ class OpenSockets:
             del self._local_open_sockets[key]
 
     def _create_process_with_local_sockets_list(self):
+        name_formatter = ProcessNameFormatter()
+        socket_formatter = connection.LocalSocketsFormatter()
+        header_formatter = ProcessByLocalAddressListFormatter()
+        socket_formatter.format(self._local_open_sockets.keys(), header_formatter.col_name_lengths())
+        name_formatter.find_longest(self._local_open_sockets.values())
+        header = header_formatter.create_header(
+            [name_formatter.longest, socket_formatter.longest_protocol, socket_formatter.longest_ip, 0]
+        )
+        name_formatter.align_names(self._local_open_sockets)
+        self._process_with_local_sockets_list.append(header)
         for socket, process_name in self._local_open_sockets.items():
-            self._process_with_local_sockets_list.append(f'{process_name}   {socket}')
+            self._process_with_local_sockets_list.append(f'{process_name} {socket}')
 
     def _create_local_socket_count_by_process_list(self):
+        name_formatter = ProcessNameFormatter()
+        header_formatter = ProcessByConnectionCountFormatter()
+        name_formatter.find_longest(self._local_open_sockets.values())
+        header = header_formatter.create_header([name_formatter.longest, 0])
+        self._local_socket_count_by_process_list.append(header)
         for socket, process_name in self._local_open_sockets.items():
             try:
                 count = self._local_socket_count_by_process[process_name]
                 self._local_socket_count_by_process[process_name] = count + 1
             except KeyError:
                 self._local_socket_count_by_process[process_name] = 0
+        name_formatter.align_names(self._local_open_sockets)
         for item in self._local_socket_count_by_process.items():
             if item[1] > 0:
                 self._local_socket_count_by_process_list.append(f'{item[0]} {item[1]}')
@@ -81,10 +99,12 @@ class OpenSockets:
 class ConnectionLoader:
     TCP = 'tcp'
     UDP = 'udp'
+    CLOSING_CONNECTION_STATES = ['FIN_WAIT1', 'FIN_WAIT2', 'TIME_WAIT']
 
     def __init__(self):
-        self._tcps = self._load(self.TCP, None)
-        self._udps = self._load(self.UDP, None)
+        conn_filter = lambda sconn: sconn.status not in self.CLOSING_CONNECTION_STATES
+        self._tcps = self._load(self.TCP, conn_filter)
+        self._udps = self._load(self.UDP, conn_filter)
 
     @property
     def tcps(self):
@@ -105,16 +125,10 @@ class ProcessLoader:
         self._processes = self._load()
         self._pid_to_procname = {}
         self._map_pid_to_proc_name()
-        self._longest_name_len = 0
-        self._align_name_lengths()
 
     @property
     def pids(self):
         return [p.pid for p in self._processes]
-
-    @property
-    def longest_name_len(self):
-        return self._longest_name_len
 
     def get_name_for_pid(self, pid):
         return self._pid_to_procname[pid] if pid else '<UNKNOWN>'
@@ -126,16 +140,6 @@ class ProcessLoader:
     def _map_pid_to_proc_name(self):
         for p in self._processes:
             self._pid_to_procname[p.pid] = p.comm if p.comm != 'java' else f'{p.comm}:{p.command_line[-1]}'
-
-    def _align_name_lengths(self):
-        self._longest_name_len = 0
-        for process_name in self._pid_to_procname.values():
-            if len(process_name) > self._longest_name_len:
-                self._longest_name_len = len(process_name)
-        self._longest_name_len += 2
-        for process_name in self._pid_to_procname.values():
-            if len(process_name) < self._longest_name_len:
-                process_name += ' ' * (self._longest_name_len - len(process_name))
 
 
 class InodeLoader:
@@ -161,3 +165,48 @@ class InodeLoader:
                 else:
                     raise
         return inodes
+
+
+class ProcessNameFormatter:
+    def __init__(self):
+        self._longest = 0
+
+    @property
+    def longest(self):
+        return self._longest
+
+    def find_longest(self, process_names):
+        self._longest = 0
+        for process_name in process_names:
+            if len(process_name) > self._longest:
+                self._longest = len(process_name)
+        return self._longest
+
+    def align_names(self, pid_to_process_names):
+        for pid, process_name in pid_to_process_names.items():
+            if len(process_name) < self._longest:
+                pid_to_process_names[pid] = process_name + ' ' * (self._longest - len(process_name))
+
+
+class TableHeaderFormatter:
+    def __init__(self, column_names):
+        self._col_names = column_names
+
+    def create_header(self, col_widths):
+        header = ''
+        for col_name, width in zip(self._col_names, col_widths):
+            header += col_name + ' ' * (width - len(col_name) + 1)
+        return header
+
+    def col_name_lengths(self):
+        return [len(col_name) for col_name in self._col_names]
+
+
+class ProcessByLocalAddressListFormatter(TableHeaderFormatter):
+    def __init__(self):
+        super().__init__(['PROCESS NAME', 'PROTOCOL', 'LOCAL ADDRESS', 'PORT'])
+
+
+class ProcessByConnectionCountFormatter(TableHeaderFormatter):
+    def __init__(self):
+        super().__init__(['PROCESS NAME', 'CONNECTIONS'])

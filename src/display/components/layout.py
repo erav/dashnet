@@ -3,16 +3,7 @@ import curses
 import locale
 import logging
 
-PROTOCOL_IP_PORT = (
-    'PROCESS NAME                    '
-    'PROTOCOL  '
-    'LOCAL ADDRESS                 '
-    'PORT'
-)
-PROCESS_NUM_CONNS = (
-    'PROCESS NAME                  '
-    'connection count'
-)
+from common.utils import NoopFilter
 
 logger = logging.getLogger(__name__)
 
@@ -141,17 +132,18 @@ class UtilizationLayout(BaseLayout):
 
     def update(
             self,
-            header_content=None,
-            proc_name_line_list=None,
+            list_filter=NoopFilter(),
+            proc_utilization_list_with_headers=None,
             remote_addr_content=None,
             connections_content=None,
             footer_content=None,
     ):
+        header_content = (f'Total: {len(proc_utilization_list_with_headers) - 1}',)
         self._header.update(header_content, attr=self._skin.default_title_attr)
         self._by_proc_name.curses_win.addstr(
-            1, 2, PROCESS_NUM_CONNS, self._skin.default_title_attr
+            1, 2, proc_utilization_list_with_headers[0], self._skin.default_title_attr
         )
-        self._by_proc_name.update(proc_name_line_list)
+        self._by_proc_name.update(sorted(list_filter.filter(proc_utilization_list_with_headers[1:])))
         self._by_remote_addr.update(remote_addr_content)
         self._by_conn.update(connections_content)
         self._footer.update(footer_content, attr=self._skin.default_title_attr)
@@ -178,8 +170,9 @@ class ListLayout(BaseLayout):
         # code = locale.getpreferredencoding()
         self._stdscr.refresh()
 
-    def update(self, header_content=None, list_lines=None, footer_content=None):
+    def update(self, list_filter=NoopFilter(), list_lines_with_headers=None, footer_content=None):
+        header_content = (f'Total: {len(list_lines_with_headers) - 1}',)
         self._header.update(header_content, attr=self._skin.default_title_attr)
-        self._list_window.curses_win.addstr(1, 2, PROTOCOL_IP_PORT, self._skin.default_title_attr)
-        self._list_window.update(list_lines)
+        self._list_window.curses_win.addstr(1, 2, list_lines_with_headers[0], self._skin.default_title_attr)
+        self._list_window.update(sorted(list_filter.filter(list_lines_with_headers[1:])))
         self._footer.update(footer_content, attr=self._skin.default_title_attr)

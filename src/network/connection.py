@@ -40,7 +40,7 @@ class Socket:
         self._port = port
 
     def __repr__(self):
-        return f'{self._ip}     {self._port}'
+        return f'{self._ip} {self._port}'
 
 
 class LocalSocket(Socket):
@@ -62,7 +62,7 @@ class LocalSocket(Socket):
         self._protocol = protocol
 
     def __repr__(self):
-        return f'{self._protocol}       {super().__repr__()}'
+        return f'{self._protocol} {super().__repr__()}'
 
 
 class LocalSocketsFormatter:
@@ -83,11 +83,15 @@ class LocalSocketsFormatter:
     def longest_protocol(self):
         return self._longest_proto
 
-    def format(self, sockets):
+    def format(self, sockets, min_lengths):
+        self._reset()
         for s in sockets:
-            longest_ip = self._get_longer(self._longest_ip, s.ip)
-            longest_port = self._get_longer(self._longest_port, s.port)
-            longest_proto = self._get_longer(self._longest_proto, s.protocol)
+            self._longest_ip = self._get_longer(self._longest_ip, s.ip)
+            self._longest_port = self._get_longer(self._longest_port, s.port)
+            self._longest_proto = self._get_longer(self._longest_proto, s.protocol)
+        self._longest_ip = max(self._longest_ip,  min_lengths[0])
+        self._longest_port = max(self._longest_port,  min_lengths[1])
+        self._longest_proto = max(self._longest_proto,  min_lengths[2])
         for s in sockets:
             s.ip += self._pad(self._longest_ip, s.ip)
             s.port += self._pad(self._longest_port, s.port)
@@ -102,6 +106,11 @@ class LocalSocketsFormatter:
         if len(s) < longest:
             return ' ' * (longest - len(s))
         return ''
+
+    def _reset(self):
+        self._longest_ip = 0
+        self._longest_port = 0
+        self._longest_proto = 0
 
 
 class Connection:
