@@ -24,6 +24,10 @@ class ToggleStates:
     def toggle_to(self, state):
         self._active = state
 
+    @property
+    def active(self):
+        return self._active
+
     def is_active(self, candidate_state):
         return self._active == candidate_state
 

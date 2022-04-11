@@ -1,8 +1,10 @@
 
+import socket
+
 
 class Protocol:
-    def __init__(self, str):
-        self._str = str
+    def __init__(self, name: str):
+        self._str = name
 
     def __repr__(self):
         return self._str
@@ -10,92 +12,124 @@ class Protocol:
 
 class Tcp(Protocol):
     def __init__(self):
-        super(Tcp, self).__init__("TCP")
+        super(Tcp, self).__init__('TCP')
 
 
 class Udp(Protocol):
     def __init__(self):
-        super(Udp, self).__init__("UDP")
+        super(Udp, self).__init__('UDP')
 
 
 class Socket:
-    def __init__(self, ip, port):
+    def __init__(self, ip: str, port: str):
         self._ip = ip if ip else ''
+        self._hostname = None
         self._port = str(port) if port else ''
+        self._service = None
 
     @property
-    def ip(self):
+    def ip(self) -> str:
         return self._ip
 
     @ip.setter
-    def ip(self, ip):
+    def ip(self, ip: str):
         self._ip = ip
 
     @property
-    def port(self):
+    def hostname(self) -> str:
+        return self._hostname
+
+    @hostname.setter
+    def hostname(self, hostname: str):
+        self._hostname = hostname
+
+    @property
+    def port(self) -> str:
         return self._port
 
     @port.setter
-    def port(self, port):
+    def port(self, port: str):
         self._port = port
+
+    @property
+    def service(self) -> str:
+        return self._service
+
+    @service.setter
+    def service(self, service: str):
+        self._service = service
+
+    def resolve_dns(self) -> None:
+        if self._hostname is None:
+            try:
+                self.hostname = socket.gethostbyaddr(self.ip)[0]
+            except Exception:
+                self.hostname = self.ip
+
+    def resolve_service(self):
+        if self._service is None:
+            try:
+                self.service = socket.getservbyport(int(self.port))
+            except Exception:
+                self.service = self.port
 
     def __repr__(self):
         return f'{self._ip} {self._port}'
 
+    def __lt__(self, other: 'Socket'):
+        return self.ip < other.ip
 
-class LocalSocket(Socket):
-    def __init__(self, ip, port, protocol):
-        """
-        :param ip: ipaddress.IpAddress
-        :param port: int
-        :param protocol: Protocol
-        """
-        super().__init__(ip, port)
-        self._protocol = protocol
+    def __eq__(self, other: 'Socket'):
+        return self.ip == other.ip and self.port == other.port
 
-    @property
-    def protocol(self):
-        return self._protocol
-
-    @protocol.setter
-    def protocol(self, protocol):
-        self._protocol = protocol
-
-    def __repr__(self):
-        return f'{self._protocol} {super().__repr__()}'
+    def __hash__(self):
+        return hash((self.ip, self.port))
 
 
-class LocalSocketsFormatter:
-    def __init__(self):
+class SocketsFormatter:
+    def __init__(self, sockets: [Socket], min_lengths: [int]):
+        self._sockets = sockets
+        self._min_lengths = min_lengths
         self._longest_ip = 0
+        self._longest_hostname = 0
         self._longest_port = 0
-        self._longest_proto = 0
+        self._longest_service = 0
 
     @property
     def longest_ip(self):
         return self._longest_ip
 
     @property
+    def longest_hostname(self):
+        return self._longest_hostname
+
+    @property
+    def longest_service(self):
+        return self._longest_service
+
+    @property
     def longest_port(self):
         return self._longest_port
 
-    @property
-    def longest_protocol(self):
-        return self._longest_proto
-
-    def format(self, sockets, min_lengths):
+    def format(self):
         self._reset()
-        for s in sockets:
+        for s in self._sockets:
             self._longest_ip = self._get_longer(self._longest_ip, s.ip)
+            self._longest_hostname = self._get_longer(self._longest_hostname, s.hostname)
             self._longest_port = self._get_longer(self._longest_port, s.port)
-            self._longest_proto = self._get_longer(self._longest_proto, s.protocol)
-        self._longest_ip = max(self._longest_ip,  min_lengths[0])
-        self._longest_port = max(self._longest_port,  min_lengths[1])
-        self._longest_proto = max(self._longest_proto,  min_lengths[2])
-        for s in sockets:
+            self._longest_service = self._get_longer(self._longest_service, s.service)
+        self._longest_ip = max(self._longest_ip,  self._min_lengths[0])
+        self._longest_hostname = max(self._longest_hostname,  self._min_lengths[0])
+        self._longest_port = max(self._longest_port,  self._min_lengths[1])
+        self._longest_service = max(self._longest_service,  self._min_lengths[1])
+        for s in self._sockets:
             s.ip += self._pad(self._longest_ip, s.ip)
+            if s.hostname:
+                s.hostname += self._pad(self._longest_hostname, s.hostname)
             s.port += self._pad(self._longest_port, s.port)
-            s.protocol += self._pad(self._longest_proto, s.protocol)
+            if s.service:
+                s.service += self._pad(self._longest_service, s.service)
+        return self
 
     @classmethod
     def _get_longer(cls, length, s):
@@ -110,6 +144,67 @@ class LocalSocketsFormatter:
     def _reset(self):
         self._longest_ip = 0
         self._longest_port = 0
+
+
+class LocalSocket(Socket):
+    def __init__(self, ip: str, port: str, protocol: str):
+        """
+        :param ip: ipaddress.IpAddress
+        :param port: int
+        :param protocol: Protocol
+        """
+        super().__init__(ip, port)
+        self._protocol = protocol
+
+    @property
+    def protocol(self):
+        return self._protocol
+
+    @protocol.setter
+    def protocol(self, protocol: str):
+        self._protocol = protocol
+
+    def __repr__(self):
+        return f'{self._protocol} {super().__repr__()}'
+
+    def __eq__(self, other: 'LocalSocket'):
+        return super().__eq__(other) and self.protocol == other.protocol
+
+    def __hash__(self):
+        return hash((super().__hash__(), self.protocol))
+
+
+class LocalSocketsFormatter(SocketsFormatter):
+    def __init__(self, sockets: [LocalSocket], min_lengths: list):
+        super().__init__(sockets, min_lengths[:4])
+        self._longest_proto = 0
+
+    @property
+    def longest_protocol(self):
+        return self._longest_proto
+
+    def format(self):
+        self._reset()
+        super().format()
+        for s in self._sockets:
+            self._longest_proto = self._get_longer(self._longest_proto, s.protocol)
+        self._longest_proto = max(self._longest_proto,  self._min_lengths[4])
+        for s in self._sockets:
+            s.protocol += self._pad(self._longest_proto, s.protocol)
+        return self
+
+    @classmethod
+    def _get_longer(cls, length, s):
+        return length if len(s) < length else len(s)
+
+    @classmethod
+    def _pad(cls, longest, s):
+        if len(s) < longest:
+            return ' ' * (longest - len(s))
+        return ''
+
+    def _reset(self):
+        super()._reset()
         self._longest_proto = 0
 
 

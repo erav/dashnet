@@ -3,7 +3,7 @@ import curses
 import locale
 import logging
 
-from common.utils import NoopFilter
+from display.components.render_opts import RenderOpts
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,7 @@ class Window:
     def __init__(self, curses_parent, win_size, skin, title=None, border=True, content=None):
         self._parent = curses_parent
         self._size = win_size
+        self._skin = skin
         self._title = title
         self._border = border
         self._content = content
@@ -67,6 +68,9 @@ class Window:
             x = 1
             self._curses_window.addstr(y, x, content)
         self._curses_window.refresh()
+
+    def add_header(self, header):
+        self.curses_win.addstr(1, 2, header, self._skin.default_title_attr)
 
     def update(self, content_lines, attr=0):
         y, x = self.curses_win.getmaxyx()
@@ -90,7 +94,7 @@ class Window:
 class BaseLayout:
     def __init__(self, stdscr, skin):
         self._stdscr = stdscr
-        self._stdscr.bkgd(skin.bg_color)
+        # self._stdscr.bkgd(skin.bg_color)
         self._header = None
         self._footer = None
 
@@ -123,30 +127,41 @@ class UtilizationLayout(BaseLayout):
             skin,
             title=' Utilization by connection '
         )
-
         self._footer = Window(self._stdscr, WindowSize(1, scr_size.w, scr_size.h - 1, 0), skin, border=False)
-
-        locale.setlocale(locale.LC_ALL, '')
-        # code = locale.getpreferredencoding()
         self._stdscr.refresh()
 
     def update(
             self,
-            list_filter=NoopFilter(),
-            proc_utilization_list_with_headers=None,
-            remote_addr_content=None,
-            connections_content=None,
+            render_opts: 'RenderOpts',
+            process_utilization_with_headers=None,
+            remote_addr_utilization_with_headers=None,
+            connections_utilization=None,
             footer_content=None,
     ):
-        header_content = (f'Total: {len(proc_utilization_list_with_headers) - 1}',)
+        header_content = (f'Total processes: {len(process_utilization_with_headers) - 1}',)
         self._header.update(header_content, attr=self._skin.default_title_attr)
-        self._by_proc_name.curses_win.addstr(
-            1, 2, proc_utilization_list_with_headers[0], self._skin.default_title_attr
-        )
-        self._by_proc_name.update(sorted(list_filter.filter(proc_utilization_list_with_headers[1:])))
-        self._by_remote_addr.update(remote_addr_content)
-        self._by_conn.update(connections_content)
+        self._update_by_process_name(process_utilization_with_headers, render_opts)
+        self._update_by_remote_addr(remote_addr_utilization_with_headers, render_opts)
+        self._by_conn.update(connections_utilization)
         self._footer.update(footer_content, attr=self._skin.default_title_attr)
+
+    def _update_by_process_name(self, utilization_with_headers, render_opts):
+        self._by_proc_name.curses_win.addstr(
+            1, 2, utilization_with_headers[0], self._skin.default_title_attr
+        )
+        utilization = utilization_with_headers[1:]
+        for f in render_opts.filters:
+            utilization = f.filter(utilization)
+        self._by_proc_name.update(sorted(utilization))
+
+    def _update_by_remote_addr(self, utilization_with_headers, render_opts):
+        self._by_remote_addr.curses_win.addstr(
+            1, 2, utilization_with_headers[0], self._skin.default_title_attr
+        )
+        utilization = utilization_with_headers[1:]
+        for f in render_opts.filters:
+            utilization = f.filter(utilization)
+        self._by_remote_addr.update(sorted(utilization))
 
 
 class ListLayout(BaseLayout):
@@ -165,14 +180,14 @@ class ListLayout(BaseLayout):
             title=f' {self._title} '
         )
         self._footer = Window(self._stdscr, WindowSize(1, scr_size.w, scr_size.h - 1, 0), skin, border=False)
-
-        locale.setlocale(locale.LC_ALL, '')
-        # code = locale.getpreferredencoding()
         self._stdscr.refresh()
 
-    def update(self, list_filter=NoopFilter(), list_lines_with_headers=None, footer_content=None):
+    def update(self, render_opts, list_lines_with_headers=None, footer_content=None):
         header_content = (f'Total: {len(list_lines_with_headers) - 1}',)
         self._header.update(header_content, attr=self._skin.default_title_attr)
-        self._list_window.curses_win.addstr(1, 2, list_lines_with_headers[0], self._skin.default_title_attr)
-        self._list_window.update(sorted(list_filter.filter(list_lines_with_headers[1:])))
+        self._list_window.add_header(list_lines_with_headers[0])
+        list_lines = list_lines_with_headers[1:]
+        for f in render_opts.filters:
+            list_lines = f.filter(list_lines)
+        self._list_window.update(sorted(list_lines))
         self._footer.update(footer_content, attr=self._skin.default_title_attr)
