@@ -113,22 +113,15 @@ class SocketsFormatter:
 
     def format(self):
         self._reset()
-        for s in self._sockets:
-            self._longest_ip = self._get_longer(self._longest_ip, s.ip)
-            self._longest_hostname = self._get_longer(self._longest_hostname, s.hostname)
-            self._longest_port = self._get_longer(self._longest_port, s.port)
-            self._longest_service = self._get_longer(self._longest_service, s.service)
-        self._longest_ip = max(self._longest_ip,  self._min_lengths[0])
-        self._longest_hostname = max(self._longest_hostname,  self._min_lengths[0])
-        self._longest_port = max(self._longest_port,  self._min_lengths[1])
-        self._longest_service = max(self._longest_service,  self._min_lengths[1])
+        self._longest_ip = max(len(max([s.ip for s in self._sockets], key=len)), self._min_lengths[0])
+        self._longest_hostname = max(len(max([s.hostname for s in self._sockets], key=len)), self._min_lengths[0])
+        self._longest_port = max(len(max([s.port for s in self._sockets], key=len)), self._min_lengths[1])
+        self._longest_service = max(len(max([s.service for s in self._sockets], key=len)), self._min_lengths[1])
         for s in self._sockets:
             s.ip += self._pad(self._longest_ip, s.ip)
-            if s.hostname:
-                s.hostname += self._pad(self._longest_hostname, s.hostname)
+            s.hostname += self._pad(self._longest_hostname, s.hostname)
             s.port += self._pad(self._longest_port, s.port)
-            if s.service:
-                s.service += self._pad(self._longest_service, s.service)
+            s.service += self._pad(self._longest_service, s.service)
         return self
 
     @classmethod
@@ -143,7 +136,9 @@ class SocketsFormatter:
 
     def _reset(self):
         self._longest_ip = 0
+        self._longest_hostname = 0
         self._longest_port = 0
+        self._longest_service = 0
 
 
 class LocalSocket(Socket):
