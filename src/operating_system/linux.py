@@ -134,18 +134,25 @@ class AllConnections:
 
 
 class AllConnectionsFormatter:
-    def __init__(self, open_sockets: 'LocalRemoteSockets'):
+    def __init__(self, open_sockets: 'LocalRemoteSockets', resolve_dns=False, resolve_service=False):
         self._connections = AllConnections(open_sockets)
+        self._resolve_dns = resolve_dns
+        self._resolve_service = resolve_service
 
     @property
     def formatted_list(self):
         header = AllConnectionsHeader()
-        formatter = SocketsFormatter(self._connections, header.col_name_lengths()).format()
+        formatter = SocketsFormatter(self._connections.keys(), header.col_name_lengths()).format()
         longest_ip = formatter.longest_ip if not self._resolve_dns else formatter.longest_hostname
         longest_port = formatter.longest_port if not self._resolve_service else formatter.longest_service
         header_line = header.create_header([longest_ip, longest_port, 0])
         formatted_list: [str] = [header_line]
-
+        for line in self._connections.as_list:
+            lip = line[0].ip if not self._resolve_dns else line[0].hostname
+            lport = line[0].port if not self._resolve_service else line[0].service
+            rip = line[2].ip if not self._resolve_dns else line[2].hostname
+            rport = line[2].port if not self._resolve_service else line[2].service
+            formatted_list.append(f'{lip}    {lport}    {rip}    {rport}   {line[3]}')
         return formatted_list
 
 

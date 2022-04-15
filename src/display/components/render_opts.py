@@ -1,6 +1,7 @@
 
 from common.utils import ToggleStates
-from common.utils import FirstCharFilter, NoopFilter
+from common.utils import FirstCharFilter
+from .skin import DefaultSkin
 
 
 class ResolveDns(ToggleStates):
@@ -63,12 +64,23 @@ class ToggleViews(ToggleStates):
         return self._key == key
 
 
+class ToggleSkin(ToggleStates):
+    def __init__(self, skins):
+        super().__init__(len(skins))
+        self._skins = skins
+
+    def active(self) -> DefaultSkin:
+        return self._skins[super().active]
+
+
 class RenderOpts:
-    def __init__(self, stdscr):
+    def __init__(self, stdscr, skins: [DefaultSkin]):
         self._stdscr = stdscr
+        self._skin = ToggleSkin(skins)
         self._views = ToggleViews('v')
         self._resolve_dns = ResolveDns('d')
         self._resolve_service = ResolveService('s')
+        self._pause = ToggleStates(2)
         self._filters = []
 
     def handle_user_key(self, key) -> bool:
@@ -80,6 +92,9 @@ class RenderOpts:
             self.dns.toggle()
         elif self.service.is_key(key):
             self.service.toggle()
+        elif key == 'p':
+            self._pause.toggle()
+            self._skin.toggle()
         elif self.add_filter(key):
             key = self._stdscr.getkey().casefold()
             if self.is_filter_key(key):
@@ -89,6 +104,10 @@ class RenderOpts:
         else:
             handled = False
         return handled
+
+    @property
+    def skin(self) -> DefaultSkin:
+        return self._skin.active()
 
     @property
     def views(self) -> ToggleViews:
@@ -101,6 +120,10 @@ class RenderOpts:
     @property
     def service(self) -> ResolveService:
         return self._resolve_service
+
+    @property
+    def pause(self) -> bool:
+        return self._pause.is_active(1)
 
     @property
     def filters(self) -> []:
@@ -117,3 +140,4 @@ class RenderOpts:
     @staticmethod
     def is_filter_key(key: str):
         return not key.casefold() < 'a' and not key.casefold() > 'z' or key == '<'
+

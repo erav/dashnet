@@ -8,45 +8,48 @@ from operating_system.linux import LocalRemoteSockets, AllConnections
 from operating_system.linux import TrafficByProcessFormatter, TrafficByRemoteAddressFormatter
 from display.components.layout import UtilizationLayout, ListLayout
 from display.components.render_opts import RenderOpts
-from display.components.skin import DefaultSkin
+from display.components.skin import CyanSkin, RedSkin
 
 
 class App:
     def __init__(self):
         self._lock = threading.RLock()
+        self._render_opts = None
 
     def start(self, _stdscr):
-        ui = Ui(_stdscr, self._lock, DefaultSkin())
+        self._render_opts = RenderOpts(_stdscr, [CyanSkin(), RedSkin()])
+        ui = Ui(_stdscr, self._lock, self._render_opts)
         ui.show_view()
         threading.Thread(daemon=True, target=self._refresh_state, kwargs={'ui': ui}).start()
         ui.handle_user_input()
     
     def _refresh_state(self, ui):
         while True:
-            open_sockets = LocalRemoteSockets()
-            open_sockets.load()
-            self._lock.acquire(blocking=False)
-            ui.update(open_sockets)
-            ui.show_view()
-            self._lock.release()
-            time.sleep(3)
+            if not self._render_opts.pause:
+                open_sockets = LocalRemoteSockets()
+                open_sockets.load()
+                self._lock.acquire(blocking=False)
+                ui.update(open_sockets)
+                ui.show_view()
+                self._lock.release()
+            time.sleep(2)
 
 
 class Ui:
 
     FOOTER = (
-        '[V]iews toogle  '
-        '[S]ervice resolution toggle  '
-        '[H]ost DNS resolution toggle  '
-        '[/<?>]filter list by first letter <?>  '
+        '[V]iews  '
+        '[P]ause  '
+        '[S]ervice resolution  '
+        '[D]NS resolution  '
+        '[/<?>]filter by first letter <?>  '
         '[//]undo filter'
     )
 
-    def __init__(self, _stdscr, lock: threading.RLock, ui_skin: 'DefaultSkin'):
+    def __init__(self, _stdscr, lock: threading.RLock, render_opts: RenderOpts):
         self._stdscr = _stdscr
         self._lock = lock
-        self._skin = ui_skin
-        self._render_opts = RenderOpts(self._stdscr)
+        self._render_opts = render_opts
         self._open_sockets = None
         self._list_layout = None
         self._utilization_layout = None
@@ -79,13 +82,13 @@ class Ui:
         self._lock.release()
 
     def show_list_view(self):
-        if not self._list_layout:
-            self._list_layout = ListLayout(self._stdscr, self._skin, 'Process TCP & UDP connections')
+        self._list_layout = ListLayout(self._stdscr, self._render_opts, 'Process TCP & UDP connections')
         self._list_layout.update(render_opts=self._render_opts, footer_content=(self.FOOTER,))
         if not self._open_sockets:
             self._list_layout.show_loading()
         else:
             all_connections = [''.join(str(i)) for i in AllConnections(self._open_sockets).as_list]
+            # all_connections = AllConnectionsFormatter(self._open_sockets).formatted_list
             self._list_layout.update(
                 render_opts=self._render_opts,
                 list_lines_with_headers=all_connections,
@@ -93,8 +96,7 @@ class Ui:
             )
 
     def show_utilization_view(self):
-        if not self._utilization_layout:
-            self._utilization_layout = UtilizationLayout(self._stdscr, self._skin)
+        self._utilization_layout = UtilizationLayout(self._stdscr, self._render_opts)
         self._utilization_layout.update(render_opts=self._render_opts, footer_content=(self.FOOTER,))
         if not self._open_sockets:
             self._utilization_layout.show_loading()

@@ -68,7 +68,6 @@ class Window:
 
     def update(self, content_lines, attr=0):
         y, x = self.curses_win.getmaxyx()
-        # self.curses_win.erase()
         if content_lines:
             if y == 1 and len(content_lines) == 1:
                 self._try_addstr(0, 1, f' {content_lines[0]} ', attr)
@@ -96,46 +95,49 @@ class Window:
 
 
 class BaseLayout:
-    def __init__(self, stdscr, skin):
+    def __init__(self, stdscr):
         self._stdscr = stdscr
-        # self._stdscr.bkgd(skin.bg_color)
         self._header = None
         self._footer = None
 
 
 class UtilizationLayout(BaseLayout):
-    def __init__(self, stdscr, skin):
-        super().__init__(stdscr, skin)
-        self._skin = skin
+    def __init__(self, stdscr, render_opts):
+        super().__init__(stdscr)
         self._stdscr.clear()
+        self._render_opts = render_opts
         scr_size = ScreenSize()
 
-        self._header = Window(self._stdscr, WindowSize(1, scr_size.w, 0, 0), skin, border=False)
+        self._header = Window(self._stdscr, WindowSize(1, scr_size.w, 0, 0), self._render_opts.skin, border=False)
 
-        self._main = Window(self._stdscr, WindowSize(scr_size.h - 1, scr_size.w, 1, 0), skin, border=False)
+        self._main = Window(
+            self._stdscr, WindowSize(scr_size.h - 1, scr_size.w, 1, 0), self._render_opts.skin, border=False
+        )
         self._by_proc_name = Window(
             self._stdscr,
             WindowSize(scr_size.half_h - 1, scr_size.half_w, 1, 0),
-            skin,
+            self._render_opts.skin,
             title=' Utilization by process '
         )
         self._by_remote_addr = Window(
             self._main.curses_win,
             WindowSize(scr_size.half_h - 1, scr_size.half_w + 1, 1, scr_size.half_w),
-            skin,
+            self._render_opts.skin,
             title=' Utilization by remote address '
         )
         self._by_conn = Window(
             self._main.curses_win,
             WindowSize(scr_size.half_h - 1, scr_size.w, scr_size.half_h, 0),
-            skin,
+            self._render_opts.skin,
             title=' Utilization by connection '
         )
-        self._footer = Window(self._stdscr, WindowSize(1, scr_size.w, scr_size.h - 1, 0), skin, border=False)
+        self._footer = Window(
+            self._stdscr, WindowSize(1, scr_size.w, scr_size.h - 1, 0), self._render_opts.skin, border=False
+        )
         self._stdscr.refresh()
 
     def show_loading(self):
-        self._header.update((f'Loading...',), attr=self._skin.default_title_attr)
+        self._header.update((f'Loading...',), attr=self._render_opts.skin.default_title_attr)
 
     def update(
             self,
@@ -147,19 +149,19 @@ class UtilizationLayout(BaseLayout):
     ):
         if process_utilization_with_headers:
             header_content = (f'Total processes: {len(process_utilization_with_headers) - 1}',)
-            self._header.update(header_content, attr=self._skin.default_title_attr)
+            self._header.update(header_content, attr=self._render_opts.skin.default_title_attr)
             self._update_by_process_name(process_utilization_with_headers, render_opts)
         if remote_addr_utilization_with_headers:
             self._update_by_remote_addr(remote_addr_utilization_with_headers, render_opts)
         if connections_utilization:
             self._by_conn.update(connections_utilization)
         if footer_content:
-            self._footer.update(footer_content, attr=self._skin.default_title_attr)
+            self._footer.update(footer_content, attr=self._render_opts.skin.default_title_attr)
         self._stdscr.refresh()
 
     def _update_by_process_name(self, utilization_with_headers, render_opts):
         self._by_proc_name.curses_win.addstr(
-            1, 2, utilization_with_headers[0], self._skin.default_title_attr
+            1, 2, utilization_with_headers[0], self._render_opts.skin.default_title_attr
         )
         utilization = utilization_with_headers[1:]
         for f in render_opts.filters:
@@ -168,7 +170,7 @@ class UtilizationLayout(BaseLayout):
 
     def _update_by_remote_addr(self, utilization_with_headers, render_opts):
         self._by_remote_addr.curses_win.addstr(
-            1, 2, utilization_with_headers[0], self._skin.default_title_attr
+            1, 2, utilization_with_headers[0], self._render_opts.skin.default_title_attr
         )
         utilization = utilization_with_headers[1:]
         for f in render_opts.filters:
@@ -177,35 +179,37 @@ class UtilizationLayout(BaseLayout):
 
 
 class ListLayout(BaseLayout):
-    def __init__(self, stdscr, skin, title):
-        super().__init__(stdscr, skin)
+    def __init__(self, stdscr, render_opts, title):
+        super().__init__(stdscr)
         self._stdscr.clear()
         self._title = title
-        self._skin = skin
+        self._render_opts = render_opts
         scr_size = ScreenSize()
 
-        self._header = Window(self._stdscr, WindowSize(1, scr_size.w, 0, 0), skin, border=False)
+        self._header = Window(self._stdscr, WindowSize(1, scr_size.w, 0, 0), self._render_opts.skin, border=False)
         self._list_window = Window(
             self._stdscr,
             WindowSize(scr_size.h - 2, scr_size.w, 1, 0),
-            skin,
+            self._render_opts.skin,
             title=f' {self._title} '
         )
-        self._footer = Window(self._stdscr, WindowSize(1, scr_size.w, scr_size.h - 1, 0), skin, border=False)
+        self._footer = Window(
+            self._stdscr, WindowSize(1, scr_size.w, scr_size.h - 1, 0), self._render_opts.skin, border=False
+        )
         self._stdscr.refresh()
 
     def show_loading(self):
-        self._header.update((f'Loading...',), attr=self._skin.default_title_attr)
+        self._header.update((f'Loading...',), attr=self._render_opts.skin.default_title_attr)
 
     def update(self, render_opts, list_lines_with_headers=None, footer_content=None):
         if list_lines_with_headers:
             header_content = (f'Total: {len(list_lines_with_headers) - 1}',)
-            self._header.update(header_content, attr=self._skin.default_title_attr)
+            self._header.update(header_content, attr=self._render_opts.skin.default_title_attr)
             self._list_window.add_header(list_lines_with_headers[0])
             list_lines = list_lines_with_headers[1:]
             for f in render_opts.filters:
                 list_lines = f.filter(list_lines)
             self._list_window.update(sorted(list_lines))
         if footer_content:
-            self._footer.update(footer_content, attr=self._skin.default_title_attr)
+            self._footer.update(footer_content, attr=self._render_opts.skin.default_title_attr)
         self._stdscr.refresh()
