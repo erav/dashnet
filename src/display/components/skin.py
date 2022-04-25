@@ -1,6 +1,7 @@
 
 import curses
 
+
 FG_RED = 1
 FG_CYAN = 2
 
@@ -26,6 +27,10 @@ class CyanSkin(DefaultSkin):
     @property
     def default_title_attr(self):
         return curses.color_pair(FG_CYAN) | curses.A_BOLD if curses.has_colors() else 0 | curses.A_BOLD
+    
+    @property
+    def cyan(self):
+        return curses.color_pair(FG_CYAN)
 
 
 class RedSkin(DefaultSkin):
@@ -35,3 +40,7 @@ class RedSkin(DefaultSkin):
     @property
     def default_title_attr(self):
         return curses.color_pair(FG_RED) | curses.A_BOLD if curses.has_colors() else 0 | curses.A_BOLD
+
+    @property
+    def red(self):
+        return curses.color_pair(FG_RED)

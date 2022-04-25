@@ -1,19 +1,18 @@
 
 import errno
 import os
+from typing import Pattern
+
 from proc import core as proclib_core
 import psutil
 
-from network.connection import LocalSocket
-from network.connection import Socket, SocketsFormatter
+from network.connection import Socket
 
 LOCALHOST_ADDRESSES = [
     '127.0.0.1',
     '::1',
     '::ffff:127.0.0.1'
 ]
-
-PADDING = 5
 
 
 class TrafficByProcess:
@@ -42,118 +41,54 @@ class TrafficByProcess:
                 self._connections_count[process_name] = 1
 
 
-class TrafficByProcessFormatter:
-    """
-    holds a dict of number of connections by process
-    """
-    def __init__(self, open_sockets: 'LocalRemoteSockets'):
-        self._traffic = TrafficByProcess(open_sockets)
-        self._longest_process_name = 0
-
-    @property
-    def formatted_list(self) -> [str]:
-        self._longest_process_name = len(max([line[0] for line in self._traffic.as_list], key=len)) + PADDING
-        self._align_process_names()
-        header_line = TrafficByProcessHeader().create_header([self._longest_process_name, 0])
-        str_list: [str] = [header_line]
-        for line in self._traffic.as_list:
-            str_list.append(f'{line[0]} {line[1]}')
-        return str_list
-
-    def _align_process_names(self) -> None:
-        for line in self._traffic.as_list:
-            line[0] = line[0] + ' ' * (self._longest_process_name - len(line[0]))
-
-
-class TrafficByRemoteAddress:
-    """
-    holds a dict of which remote address is contacted by which process
-    """
-    def __init__(self, open_sockets: 'LocalRemoteSockets'):
-        self._remote_sockets = open_sockets.remote_sockets
+class TrafficByAddress:
+    def __init__(self, sockets: 'dict[Socket]'):
+        self._sockets = sockets
         self._connections_count = {}
         self._count()
 
     def _count(self) -> None:
         """
         assumed below there will always only be count = 1,
-        i.e. only one process engaging with a remote address
-        :return:
+        i.e. only one process engaging with an address
         """
-        for remote, proc_name in self._remote_sockets.items():
+        for sock, proc_name in self._sockets.items():
             try:
-                process_name, count = self._connections_count[remote]
-                self._connections_count[remote] = (process_name, count + 1)
+                process_name, count = self._connections_count[sock]
+                self._connections_count[sock] = (process_name, count + 1)
             except KeyError:
-                self._connections_count[remote] = (proc_name, 1)
+                self._connections_count[sock] = (proc_name, 1)
 
     @property
     def as_list(self) -> [['Socket', str]]:
         as_list = []
-        for remote, (process_name, count) in self._connections_count.items():
-            as_list.append([remote, count])
+        for local, (process_name, count) in self._connections_count.items():
+            as_list.append([local, count])
         return as_list
 
     @property
-    def remotes(self):
-        return self._remote_sockets
-
-
-class TrafficByRemoteAddressFormatter:
-    def __init__(self, open_sockets: 'LocalRemoteSockets', resolve_dns=False, resolve_service=False):
-        self._traffic = TrafficByRemoteAddress(open_sockets)
-        self._resolve_dns = resolve_dns
-        self._resolve_service = resolve_service
-        self._longest_remote = 0
-
-    @property
-    def formatted_list(self) -> [str]:
-        header = TrafficByRemoteAddressHeader()
-        formatter = SocketsFormatter(self._traffic.remotes, header.col_name_lengths()).format()
-        longest_ip = formatter.longest_ip if not self._resolve_dns else formatter.longest_hostname
-        longest_port = formatter.longest_port if not self._resolve_service else formatter.longest_service
-        header_line = header.create_header([longest_ip + 3, longest_port + 3, 0])
-        formatted_list: [str] = [header_line]
-        for line in self._traffic.as_list:
-            ip = line[0].ip if not self._resolve_dns else line[0].hostname
-            port = line[0].port if not self._resolve_service else line[0].service
-            formatted_list.append(f'{ip}    {port}    {line[1]}')
-        return formatted_list
+    def sockets(self):
+        return self._sockets
 
 
 class AllConnections:
     def __init__(self, open_sockets: 'LocalRemoteSockets'):
-        self._connections = open_sockets.connections
+        self._open_sockets = open_sockets
 
     @property
-    def as_list(self) -> [[str, 'LocalSocket', 'Socket']]:
+    def locals(self):
+        return self._open_sockets.local_sockets
+
+    @property
+    def remotes(self):
+        return self._open_sockets.remote_sockets
+
+    @property
+    def as_list(self) -> [[str, 'Socket', 'Socket']]:
         as_list = []
-        for (local, remote), proc_name in self._connections.items():
-            as_list.append([local, '<=>', remote, proc_name])
+        for (local, remote), proc_name in self._open_sockets.connections.items():
+            as_list.append([local, remote, proc_name])
         return as_list
-
-
-class AllConnectionsFormatter:
-    def __init__(self, open_sockets: 'LocalRemoteSockets', resolve_dns=False, resolve_service=False):
-        self._connections = AllConnections(open_sockets)
-        self._resolve_dns = resolve_dns
-        self._resolve_service = resolve_service
-
-    @property
-    def formatted_list(self):
-        header = AllConnectionsHeader()
-        formatter = SocketsFormatter(self._connections.keys(), header.col_name_lengths()).format()
-        longest_ip = formatter.longest_ip if not self._resolve_dns else formatter.longest_hostname
-        longest_port = formatter.longest_port if not self._resolve_service else formatter.longest_service
-        header_line = header.create_header([longest_ip, longest_port, 0])
-        formatted_list: [str] = [header_line]
-        for line in self._connections.as_list:
-            lip = line[0].ip if not self._resolve_dns else line[0].hostname
-            lport = line[0].port if not self._resolve_service else line[0].service
-            rip = line[2].ip if not self._resolve_dns else line[2].hostname
-            rport = line[2].port if not self._resolve_service else line[2].service
-            formatted_list.append(f'{lip}    {lport}    {rip}    {rport}   {line[3]}')
-        return formatted_list
 
 
 class LocalRemoteSockets:
@@ -183,27 +118,68 @@ class LocalRemoteSockets:
         self._connection_loader.load()
         self._add_connections(self._connection_loader.tcps, ConnectionLoader.TCP)
         self._add_connections(self._connection_loader.udps, ConnectionLoader.UDP)
-        # self._filter_local_sockets(self._localhost_filter)
         return self
 
     def _add_connections(self, connections, protocol) -> None:
         for conn in connections:
-            local_socket = remote_socket = None
+            local_socket = None
+            remote_socket = None
             process_name = self._process_loader.get_name_for_pid(conn.pid)
             if conn.laddr:
-                local_socket = LocalSocket(conn.laddr.ip, conn.laddr.port, protocol)
+                local_socket = Socket(conn.laddr.ip, str(conn.laddr.port), protocol)
                 self._resolve(local_socket)
                 self._local_sockets[local_socket] = process_name
             if conn.raddr:
-                remote_socket = Socket(conn.raddr[0], conn.raddr[1])
+                remote_socket = Socket(conn.raddr.ip, str(conn.raddr.port), protocol)
                 self._resolve(remote_socket)
                 self._remote_sockets[remote_socket] = process_name
-            if local_socket and remote_socket:
-                self._connections[(local_socket, remote_socket)] = process_name
+            self._connections[(local_socket, remote_socket)] = process_name
 
-    def _filter_local_sockets(self, socket_filter) -> None:
-        for key in list(filter(socket_filter, self._local_sockets.keys())):
-            del self._local_sockets[key]
+    def filter_lsockets(self, socket_filter) -> None:
+        for sock in list(filter(socket_filter, self._local_sockets)):
+            del self._local_sockets[sock]
+
+    def filter_rsockets(self, socket_filter) -> None:
+        for sock in list(filter(socket_filter, self._remote_sockets)):
+            del self._remote_sockets[sock]
+
+    def filter_by_regex(self, re_pattern: Pattern[str]):
+        for (lsock, rsock), process_name in list(self._connections.items()):
+            # if self._match(re_pattern, lsock, process_name) or self._match(re_pattern, rsock, process_name):
+            if self._match_line(re_pattern, lsock, rsock, process_name):
+                continue
+            try:
+                del self._local_sockets[lsock]
+            except KeyError:
+                pass
+            try:
+                del self._remote_sockets[rsock]
+            except KeyError:
+                pass
+            del self._connections[(lsock, rsock)]
+
+    @staticmethod
+    def _match_line(re_pattern: Pattern, lsock: Socket, rsock: Socket, process_name: str) -> bool:
+        line = (
+            f'{process_name} '
+            f'{str(lsock)if lsock else ""} '
+            f'{str(rsock)if rsock else ""}'
+        )
+        return bool(re_pattern.search(line))
+
+    @staticmethod
+    def _match(re_pattern: Pattern, sock: Socket, process_name: str) -> bool:
+        return (
+            bool(re_pattern.search(process_name)) or (
+                sock and (
+                    bool(re_pattern.search(sock.protocol)) or
+                    bool(re_pattern.search(sock.ip)) or
+                    bool(re_pattern.search(sock.hostname)) or
+                    bool(re_pattern.search(sock.port)) or
+                    bool(re_pattern.search(sock.service))
+                )
+            )
+        )
 
     @staticmethod
     def _localhost_filter(_socket) -> bool:
@@ -294,7 +270,6 @@ class ProcessLoader:
                 self._pid_to_procname[p.pid] = f'{p.comm}:{p.command_line[1][:12]}'
             else:
                 self._pid_to_procname[p.pid] = p.comm
-            # self._pid_to_procname[p.pid] = p.comm if p.comm != 'java' else f'{p.comm}:{p.command_line[-1]}'
 
 
 class InodeLoader:
@@ -332,35 +307,12 @@ class InodeLoader:
         return inodes
 
 
-class TableHeaderFormatter:
-    def __init__(self, column_names):
-        self._col_names = column_names
-
-    def create_header(self, col_widths: []) -> str:
-        header = ''
-        for col_name, width in zip(self._col_names, col_widths):
-            header += col_name + ' ' * (width - len(col_name) + 1)
-        return header
-
-    def col_name_lengths(self) -> []:
-        return [len(col_name) for col_name in self._col_names]
+class DeviceUsedForIp:
+    def __init__(self, ip):
+        self._script = f"ip route get {ip} | head -n1 | awk '{{print $5}}'"
 
 
-class ProcessByLocalAddressListFormatter(TableHeaderFormatter):
+class DeviceStats:
     def __init__(self):
-        super().__init__(['PROCESS', 'PROTOCOL', 'LOCAL ADDRESS', 'PORT', 'REMOTE ADDRESS'])
-
-
-class TrafficByProcessHeader(TableHeaderFormatter):
-    def __init__(self):
-        super().__init__(['PROCESS', 'CONNECTIONS'])
-
-
-class TrafficByRemoteAddressHeader(TableHeaderFormatter):
-    def __init__(self):
-        super().__init__(['REMOTE ADDRESS', 'PORT', 'CONNECTIONS'])
-
-
-class AllConnectionsHeader(TableHeaderFormatter):
-    def __init__(self):
-        super().__init__(['PROTOCOL', 'LOCAL ADDRESS', 'PORT', '    ', 'REMOTE ADDRESS', 'PORT', 'PROCESS'])
+        self._script = "ip -s address"
+        self._inactive_device = 'NO CARRIER'

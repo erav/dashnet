@@ -1,18 +1,4 @@
 
-class NoopFilter:
-    @staticmethod
-    def filter(filtered):
-        return filtered
-
-
-class FirstCharFilter:
-    def __init__(self, ch):
-        self._ch = ch.casefold()
-
-    def filter(self, text_lines):
-        return list(filter(lambda line: line.casefold().startswith(self._ch), text_lines))
-
-
 class ToggleStates:
     def __init__(self, number_of_states):
         self._number_of_states = number_of_states
