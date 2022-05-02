@@ -46,7 +46,7 @@ class ScreenSize(WindowSize):
 
     @property
     def half_w(self):
-        return int(self.w / 2)
+        return int(self.w / 3)
 
 
 class Window:
@@ -151,7 +151,7 @@ class UtilizationLayout(BaseLayout):
         )
         self._by_remote_addr = Window(
             self._main.curses_win,
-            WindowSize(scr_size.half_h - 1, scr_size.half_w + 1, 1, scr_size.half_w),
+            WindowSize(scr_size.half_h - 1, 2 * scr_size.half_w + 1, 1, scr_size.half_w),
             self._opts.skin,
             title=self.BY_REMOTE_ADDRESS
         )

@@ -1,112 +1,196 @@
 
-from network.connection import SocketsFormatter, Socket
-from operating_system.linux import TrafficByAddress, AllConnections, TrafficByProcess, LocalRemoteSockets
+from typing import Dict
 
-PAD = 5
+from network.connection import Socket
+from operating_system.linux import AllConnections
+from operating_system.linux import LocalRemoteSockets
+from operating_system.linux import TrafficByAddress
+from operating_system.linux import TrafficByProcess
 
 
-class TrafficByAddressFormatter:
-    def __init__(self, sockets: 'dict[Socket]', resolve_dns=False, resolve_service=False):
+class TrafficByLocalAddressFormatter:
+    def __init__(self, sockets: 'Dict[Socket]', resolve_dns=False, resolve_service=False):
         self._traffic = TrafficByAddress(sockets)
+        self._header = TrafficByLocalAddressHeader()
         self._resolve_dns = resolve_dns
         self._resolve_service = resolve_service
+        self._formatter = LocalAddressFormatter(sockets, self._header)
 
     @property
     def formatted_list(self) -> [str]:
-        header = TrafficByAddressHeader()
-        formatter = SocketsFormatter(self._traffic.sockets, header.col_name_lengths()).format()
-        longest_ip = formatter.longest_ip if not self._resolve_dns else formatter.longest_hostname
-        longest_port = formatter.longest_port if not self._resolve_service else formatter.longest_service
-        header_line = header.create_header(
-            [longest_ip + PAD, longest_port + PAD, formatter.longest_protocol + PAD, 0]
-        )
-        formatted_list: [str] = [header_line]
+        pad = 3
+        formatted_list: [str] = [(self._create_header(pad))]
         for sock, count in self._traffic.as_list:
-            ip = formatter.padded_ip(sock.ip) if not self._resolve_dns else formatter.padded_hostname(sock.hostname)
-            port = (
-                formatter.padded_port(sock.port) 
-                if not self._resolve_service 
-                else formatter.padded_service(sock.service)
+            ip = (
+                self._formatter.get('hostname').padded(sock.hostname)
+                if self._resolve_dns else
+                self._formatter.get('ip').padded(sock.ip)
             )
-            pad = ' ' * (PAD + 1)
-            formatted_list.append(f'{ip}{pad}{port}{pad}{formatter.padded_protocol(sock.protocol)}{pad}{count}')
+            port = (
+                self._formatter.get('service').padded(sock.service)
+                if self._resolve_service else
+                self._formatter.get('port').padded(sock.port)
+            )
+            protocol = self._formatter.get('protocol').padded(sock.protocol)
+            formatted_list.append(
+                f'{ip}{" " * pad}'
+                f'{port}{" " * pad}'
+                f'{protocol}{" " * pad}'
+                f'{count}'
+            )
         return formatted_list
+
+    def _create_header(self, pad):
+        header_line = self._header.create_header([
+            self._formatter.get('hostname').longest if self._resolve_dns else self._formatter.get('ip').longest,
+            self._formatter.get('service').longest if self._resolve_service else self._formatter.get('port').longest,
+            self._formatter.get('protocol').longest,
+            0
+        ], pad)
+        return header_line
+
+
+class TrafficByRemoteAddressFormatter:
+    def __init__(self, remotes: 'Dict[Socket]', resolve_dns=False, resolve_service=False):
+        self._remotes = remotes
+        self._resolve_dns = resolve_dns
+        self._resolve_service = resolve_service
+        self._traffic = TrafficByAddress(remotes)
+        self._header = TrafficByRemoteAddressHeader()
+        self._formatter = RemoteAddressFormatter(remotes, self._header)
+
+    @property
+    def formatted_list(self) -> [str]:
+        pad = 3
+        formatted_list: [str] = [self._create_header(pad)]
+        for sock, count in self._traffic.as_list:
+            pi = self._remotes[sock]
+            ip = (
+                self._formatter.get('hostname').padded(sock.hostname)
+                if self._resolve_dns else
+                self._formatter.get('ip').padded(sock.ip)
+            )
+            port = (
+                self._formatter.get('service').padded(sock.service)
+                if self._resolve_service else
+                self._formatter.get('port').padded(sock.port)
+            )
+            protocol = self._formatter.get('protocol').padded(sock.protocol)
+            formatted_list.append(
+                f'{self._formatter.get("iface").padded(pi.iface)}{" " * pad}'
+                f'{ip}{" " * pad}'
+                f'{port}{" " * pad}'
+                f'{protocol}{" " * pad}'
+                f'{count}'
+            )
+        return formatted_list
+
+    def _create_header(self, pad):
+        return self._header.create_header([
+            self._formatter.get('iface').longest,
+            self._formatter.get('hostname').longest if self._resolve_dns else self._formatter.get('ip').longest,
+            self._formatter.get('service').longest if self._resolve_service else self._formatter.get('port').longest,
+            self._formatter.get('protocol').longest,
+            0
+        ], pad)
 
 
 class AllConnectionsFormatter:
-    def __init__(self, open_sockets: 'LocalRemoteSockets', resolve_dns=False, resolve_service=False):
-        self._connections = AllConnections(open_sockets)
+    def __init__(self, sockets: 'LocalRemoteSockets', resolve_dns=False, resolve_service=False):
+        self._connections = AllConnections(sockets)
         self._resolve_dns = resolve_dns
         self._resolve_service = resolve_service
-        self._pformatter = TrafficByProcessFormatter(open_sockets)
-        self._lformatter = SocketsFormatter(open_sockets.local_sockets, TrafficByAddressHeader().col_name_lengths())
-        self._rformatter = SocketsFormatter(open_sockets.remote_sockets, TrafficByAddressHeader().col_name_lengths())
+        self._header = AllConnectionsHeader()
+        self._pformatter = TrafficByProcessFormatter(sockets, self._header)
+        self._rformatter = RemoteAddressFormatter(sockets.remotes, TrafficByRemoteAddressHeader())
+        self._lformatter = LocalAddressFormatter(sockets.locals, TrafficByLocalAddressHeader())
 
     @property
     def formatted_list(self):
-        self._lformatter.format()
-        self._rformatter.format()
-        header = AllConnectionsHeader()
-        header_line = header.create_header([
-            self._pformatter.longest_name + PAD,
-            (self._lformatter.longest_ip if not self._resolve_dns else self._lformatter.longest_hostname) + PAD,
-            (self._lformatter.longest_port if not self._resolve_service else self._lformatter.longest_service) + PAD,
-            (self._rformatter.longest_ip if not self._resolve_dns else self._rformatter.longest_hostname) + PAD,
-            (self._rformatter.longest_port if not self._resolve_service else self._rformatter.longest_service) + PAD,
-            0
-        ])
+        pad = 3
+        header_line = self._create_header(pad)
         formatted_list: [str] = [header_line]
-        pad = ' ' * (PAD + 1)
-        for lsock, rsock, process_name in self._connections.as_list:
+        for lsock, rsock, pi in self._connections.as_list:
+            iface = pi.iface if pi.iface else ''
             formatted_list.append(
-                f'{self._pformatter.padded_name(process_name)}{pad}'
-                f'{self._get_ip(lsock, self._lformatter)}{pad}'
-                f'{self._get_port(lsock, self._lformatter)}{pad}'
-                f'{self._get_ip(rsock, self._rformatter)}{pad}'
-                f'{self._get_port(rsock, self._rformatter)}{pad}'
-                f'{self._get_protocol(lsock, self._lformatter)}'
+                f'{self._pformatter.get("process").padded(pi.process)}{" " * pad}'
+                f'{self._get_ip(lsock, self._lformatter)}{" " * pad}'
+                f'{self._get_port(lsock, self._lformatter)}{" " * pad}'
+                f'{self._get_ip(rsock, self._rformatter)}{" " * pad}'
+                f'{self._get_port(rsock, self._rformatter)}{" " * pad}'
+                f'{self._get_protocol(lsock, self._lformatter)}{" " * pad}'
+                f'{self._rformatter.get("iface").padded(iface)}'
             )
         return formatted_list
 
+    def _create_header(self, pad):
+        header_line = self._header.create_header([
+            self._pformatter.get('process').longest,
+            self._get_longest_ip(self._lformatter),
+            self._get_longest_service(self._lformatter),
+            self._get_longest_ip(self._rformatter),
+            self._get_longest_service(self._rformatter),
+            self._rformatter.get('protocol').longest,
+            0
+        ], pad)
+        return header_line
+
+    def _get_longest_service(self, formatter):
+        return formatter.get('port').longest if not self._resolve_service else formatter.get('service').longest
+
+    def _get_longest_ip(self, formatter):
+        return formatter.get('ip').longest if not self._resolve_dns else formatter.get('hostname').longest
+
     @classmethod
     def _get_protocol(cls, sock, formatter):
-        return formatter.padded_protocol(sock.protocol) if sock else formatter.padded_protocol('')
+        pf = formatter.get('protocol')
+        return pf.padded(sock.protocol) if sock else pf.padded('')
 
     def _get_ip(self, sock, formatter):
+        hf = formatter.get('hostname')
+        ipf = formatter.get('ip')
         if self._resolve_dns:
-            return formatter.padded_hostname('') if not sock else formatter.padded_hostname(sock.hostname)
+            return hf.padded('') if not sock else hf.padded(sock.hostname)
         else:
-            return formatter.padded_ip('') if not sock else formatter.padded_ip(sock.ip)
+            return ipf.padded('') if not sock else ipf.padded(sock.ip)
 
     def _get_port(self, sock, formatter):
+        sf = formatter.get('service')
+        pf = formatter.get('port')
         if self._resolve_service:
-            return formatter.padded_service('') if not sock else formatter.padded_service(sock.service)
+            return sf.padded('') if not sock else sf.padded(sock.service)
         else:
-            return formatter.padded_port('') if not sock else formatter.padded_port(sock.port)
+            return pf.padded('') if not sock else pf.padded(sock.port)
 
 
 class TableHeaderFormatter:
     def __init__(self, column_names):
         self._col_names = column_names
 
-    def create_header(self, col_widths: []) -> str:
+    def create_header(self, col_widths: [], pad: int = 1) -> str:
         header = ''
         for col_name, width in zip(self._col_names, col_widths):
-            header += col_name + ' ' * (width - len(col_name) + 1)
+            diff = width - len(col_name) + pad
+            header += col_name + ' ' * (diff if diff > 0 else pad)
         return header
 
-    def col_name_lengths(self) -> []:
-        return [len(col_name) for col_name in self._col_names]
+    def col_len(self, column_name):
+        return next(len(col_name) for col_name in self._col_names if col_name == column_name)
 
 
 class AllConnectionsHeader(TableHeaderFormatter):
     def __init__(self):
-        super().__init__(['PROCESS', 'LOCAL ADDRESS', 'PORT', 'REMOTE ADDRESS', 'PORT', 'PROTOCOL'])
+        super().__init__(['PROCESS', 'LOCAL ADDRESS', 'PORT', 'REMOTE ADDRESS', 'PORT', 'PROTOCOL', 'INTERFACE'])
 
 
-class TrafficByAddressHeader(TableHeaderFormatter):
+class TrafficByLocalAddressHeader(TableHeaderFormatter):
     def __init__(self):
-        super().__init__(['ADDRESS', 'PORT', 'PROTOCOL', 'CONNECTIONS'])
+        super().__init__(['LOCAL ADDRESS', 'PORT', 'PROTOCOL', 'CONNECTIONS'])
+
+
+class TrafficByRemoteAddressHeader(TableHeaderFormatter):
+    def __init__(self):
+        super().__init__(['INTERFACE', 'REMOTE ADDRESS', 'PORT', 'PROTOCOL', 'CONNECTIONS'])
 
 
 class TrafficByProcessHeader(TableHeaderFormatter):
@@ -118,28 +202,97 @@ class TrafficByProcessFormatter:
     """
     holds a dict of number of connections per process
     """
-    def __init__(self, open_sockets: 'LocalRemoteSockets'):
+    def __init__(self, open_sockets: 'LocalRemoteSockets', header: TableHeaderFormatter):
         self._traffic = TrafficByProcess(open_sockets)
-        self._longest_process_name = 0
+        self._header = header
+        self._formatters = {}
         self.format()
 
-    def format(self):
-        if self._traffic.as_list:
-            self._longest_process_name = len(max([line[0] for line in self._traffic.as_list], key=len)) + PAD
+    def get(self, formatter_name: str) -> 'AttrFormatter':
+        return self._formatters[formatter_name]
 
-    @property
-    def longest_name(self):
-        return self._longest_process_name
+    def format(self):
+        if self._traffic.as_list and not self._formatters:
+            self._formatters = {
+                'process': AttrFormatter(
+                    [line[0] for line in self._traffic.as_list], self._header.col_len('PROCESS')
+                ).format(),
+            }
 
     @property
     def formatted_list(self) -> [str]:
+        pad = 9
+        self.format()
         if self._traffic.as_list:
-            header_line = TrafficByProcessHeader().create_header([self._longest_process_name, 0])
+            header_line = TrafficByProcessHeader().create_header([self._formatters.get('process').longest, 0], pad)
             str_list: [str] = [header_line]
             for process_name, count in self._traffic.as_list:
-                str_list.append(f'{self.padded_name(process_name)} {count}')
+                str_list.append(
+                    f'{self._formatters.get("process").padded(process_name)}{" " * pad}'
+                    f'{count}'
+                )
             return str_list
         return []
 
-    def padded_name(self, process_name) -> None:
-        return process_name + ' ' * (self._longest_process_name - len(process_name))
+
+class AttrFormatter:
+    def __init__(self, attr_values: [str], min_len):
+        self._attr_values = attr_values
+        self._min_len = min_len
+        self._longest = 0
+
+    @property
+    def longest(self):
+        return self._longest
+
+    def format(self):
+        self._reset()
+        longest_value = len(max(self._attr_values, key=len)) if self._attr_values else 0
+        self._longest = max(longest_value, self._min_len)
+        return self
+
+    def padded(self, attr):
+        return self._padded(self._longest, attr)
+
+    @classmethod
+    def _padded(cls, longest, s):
+        if len(s) < longest:
+            padding = ' ' * (longest - len(s))
+            return s + padding
+        return s
+
+    def _reset(self):
+        self._longest = 0
+
+
+class LocalAddressFormatter:
+    def __init__(self, sockets: 'Dict[Socket]', header: TableHeaderFormatter):
+        self._formatters = {
+            'ip': AttrFormatter([s.ip for s in sockets], header.col_len('LOCAL ADDRESS')).format(),
+            'hostname': AttrFormatter([s.hostname for s in sockets], header.col_len('LOCAL ADDRESS')).format(),
+            'port': AttrFormatter([s.port for s in sockets], header.col_len('PORT')).format(),
+            'service': AttrFormatter([s.service for s in sockets], header.col_len('PORT')).format(),
+            'protocol': AttrFormatter([s.protocol for s in sockets], header.col_len('PROTOCOL')).format(),
+        }
+
+    def get(self, formatter_name: str) -> AttrFormatter:
+        return self._formatters[formatter_name]
+
+
+class RemoteAddressFormatter:
+    def __init__(self, sockets: 'Dict[Socket]', header: TableHeaderFormatter):
+        self._formatters = {
+            'iface': AttrFormatter(
+                [pi.iface for pi in sockets.values() if pi.iface], header.col_len('INTERFACE')
+            ).format(),
+            'ip': AttrFormatter([s.ip for s in sockets], header.col_len('REMOTE ADDRESS')).format(),
+            'hostname': AttrFormatter(
+                [s.hostname for s in sockets], header.col_len('REMOTE ADDRESS')
+            ).format(),
+            'port': AttrFormatter([s.port for s in sockets], header.col_len('PORT')).format(),
+            'service': AttrFormatter([s.service for s in sockets], header.col_len('PORT')).format(),
+            'protocol': AttrFormatter([s.protocol for s in sockets], header.col_len('PROTOCOL')).format(),
+        }
+
+    def get(self, formatter_name: str) -> AttrFormatter:
+        return self._formatters[formatter_name]

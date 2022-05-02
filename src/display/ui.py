@@ -3,10 +3,15 @@ import curses
 import locale
 import threading
 
-from display.components.formatters import TrafficByAddressFormatter, TrafficByProcessFormatter, AllConnectionsFormatter
-from display.components.layout import UtilizationLayout, ListLayout
+from display.components.formatters import AllConnectionsFormatter
+from display.components.formatters import TrafficByLocalAddressFormatter
+from display.components.formatters import TrafficByProcessFormatter
+from display.components.formatters import TrafficByProcessHeader
+from display.components.formatters import TrafficByRemoteAddressFormatter
+from display.components.layout import ListLayout
+from display.components.layout import UtilizationLayout
 from display.components.render_opts import RenderOpts
-from operating_system.linux import LocalRemoteSockets, AllConnections
+from operating_system.linux import LocalRemoteSockets
 
 
 class Ui:
@@ -82,12 +87,12 @@ class Ui:
         if not self._open_sockets:
             self._utilization_layout.show_loading()
         else:
-            process_traffic = TrafficByProcessFormatter(self._open_sockets)
-            remote_traffic = TrafficByAddressFormatter(
-                self._open_sockets.remote_sockets, self._opts.dns.resolve, self._opts.service.resolve
+            process_traffic = TrafficByProcessFormatter(self._open_sockets, TrafficByProcessHeader())
+            remote_traffic = TrafficByRemoteAddressFormatter(
+                self._open_sockets.remotes, self._opts.dns.resolve, self._opts.service.resolve
             )
-            local_traffic = TrafficByAddressFormatter(
-                self._open_sockets.local_sockets, self._opts.dns.resolve, self._opts.service.resolve
+            local_traffic = TrafficByLocalAddressFormatter(
+                self._open_sockets.locals, self._opts.dns.resolve, self._opts.service.resolve
             )
             self._utilization_layout.update(
                 header_content=self._header_title(),

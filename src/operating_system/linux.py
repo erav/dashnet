@@ -1,12 +1,15 @@
 
 import errno
 import os
+import re
+import subprocess
+from typing import Dict
 from typing import Pattern
 
 from proc import core as proclib_core
 import psutil
 
-from network.connection import Socket
+from network.connection import Socket, ProcessIface
 
 LOCALHOST_ADDRESSES = [
     '127.0.0.1',
@@ -20,7 +23,7 @@ class TrafficByProcess:
     holds a dict of number of connections by process
     """
     def __init__(self, open_sockets: 'LocalRemoteSockets'):
-        self._local_sockets = open_sockets.local_sockets
+        self._local_sockets = open_sockets.locals
         self._connections_count = {}
         self._count()
         self._as_list = []
@@ -33,16 +36,16 @@ class TrafficByProcess:
         return self._as_list
 
     def _count(self) -> None:
-        for local_socket, process_name in self._local_sockets.items():
+        for local_socket, pi in self._local_sockets.items():
             try:
-                count = self._connections_count[process_name]
-                self._connections_count[process_name] = count + 1
+                count = self._connections_count[pi.process]
+                self._connections_count[pi.process] = count + 1
             except KeyError:
-                self._connections_count[process_name] = 1
+                self._connections_count[pi.process] = 1
 
 
 class TrafficByAddress:
-    def __init__(self, sockets: 'dict[Socket]'):
+    def __init__(self, sockets: 'Dict[Socket]'):
         self._sockets = sockets
         self._connections_count = {}
         self._count()
@@ -52,18 +55,18 @@ class TrafficByAddress:
         assumed below there will always only be count = 1,
         i.e. only one process engaging with an address
         """
-        for sock, proc_name in self._sockets.items():
+        for sock, pi in self._sockets.items():
             try:
                 process_name, count = self._connections_count[sock]
                 self._connections_count[sock] = (process_name, count + 1)
             except KeyError:
-                self._connections_count[sock] = (proc_name, 1)
+                self._connections_count[sock] = (pi.process, 1)
 
     @property
     def as_list(self) -> [['Socket', str]]:
         as_list = []
-        for local, (process_name, count) in self._connections_count.items():
-            as_list.append([local, count])
+        for sock, (process_name, count) in self._connections_count.items():
+            as_list.append([sock, count])
         return as_list
 
     @property
@@ -77,17 +80,17 @@ class AllConnections:
 
     @property
     def locals(self):
-        return self._open_sockets.local_sockets
+        return self._open_sockets.locals
 
     @property
     def remotes(self):
-        return self._open_sockets.remote_sockets
+        return self._open_sockets.remotes
 
     @property
     def as_list(self) -> [[str, 'Socket', 'Socket']]:
         as_list = []
-        for (local, remote), proc_name in self._open_sockets.connections.items():
-            as_list.append([local, remote, proc_name])
+        for (local, remote), pi in self._open_sockets.connections.items():
+            as_list.append([local, remote, pi])
         return as_list
 
 
@@ -102,11 +105,11 @@ class LocalRemoteSockets:
         self._port_to_service = {}
 
     @property
-    def local_sockets(self):
+    def locals(self):
         return self._local_sockets
 
     @property
-    def remote_sockets(self):
+    def remotes(self):
         return self._remote_sockets
 
     @property
@@ -121,19 +124,23 @@ class LocalRemoteSockets:
         return self
 
     def _add_connections(self, connections, protocol) -> None:
+        iface_resolver = IfaceResolver()
         for conn in connections:
             local_socket = None
             remote_socket = None
             process_name = self._process_loader.get_name_for_pid(conn.pid)
+            pi = ProcessIface(process_name)
             if conn.laddr:
                 local_socket = Socket(conn.laddr.ip, str(conn.laddr.port), protocol)
                 self._resolve(local_socket)
-                self._local_sockets[local_socket] = process_name
+                self._local_sockets[local_socket] = pi
             if conn.raddr:
                 remote_socket = Socket(conn.raddr.ip, str(conn.raddr.port), protocol)
                 self._resolve(remote_socket)
-                self._remote_sockets[remote_socket] = process_name
-            self._connections[(local_socket, remote_socket)] = process_name
+                iface_name = iface_resolver.get_iface(remote_socket.ip)
+                pi.iface = iface_name
+                self._remote_sockets[remote_socket] = pi
+            self._connections[(local_socket, remote_socket)] = pi
 
     def filter_lsockets(self, socket_filter) -> None:
         for sock in list(filter(socket_filter, self._local_sockets)):
@@ -144,9 +151,8 @@ class LocalRemoteSockets:
             del self._remote_sockets[sock]
 
     def filter_by_regex(self, re_pattern: Pattern[str]):
-        for (lsock, rsock), process_name in list(self._connections.items()):
-            # if self._match(re_pattern, lsock, process_name) or self._match(re_pattern, rsock, process_name):
-            if self._match_line(re_pattern, lsock, rsock, process_name):
+        for (lsock, rsock), pi in list(self._connections.items()):
+            if self._match_line(re_pattern, lsock, rsock, pi):
                 continue
             try:
                 del self._local_sockets[lsock]
@@ -159,27 +165,14 @@ class LocalRemoteSockets:
             del self._connections[(lsock, rsock)]
 
     @staticmethod
-    def _match_line(re_pattern: Pattern, lsock: Socket, rsock: Socket, process_name: str) -> bool:
+    def _match_line(re_pattern: Pattern, lsock: Socket, rsock: Socket, pi: ProcessIface) -> bool:
         line = (
-            f'{process_name} '
+            f'{pi.process} '
+            f'{pi.iface if pi.iface else ""} '
             f'{str(lsock)if lsock else ""} '
             f'{str(rsock)if rsock else ""}'
         )
         return bool(re_pattern.search(line))
-
-    @staticmethod
-    def _match(re_pattern: Pattern, sock: Socket, process_name: str) -> bool:
-        return (
-            bool(re_pattern.search(process_name)) or (
-                sock and (
-                    bool(re_pattern.search(sock.protocol)) or
-                    bool(re_pattern.search(sock.ip)) or
-                    bool(re_pattern.search(sock.hostname)) or
-                    bool(re_pattern.search(sock.port)) or
-                    bool(re_pattern.search(sock.service))
-                )
-            )
-        )
 
     @staticmethod
     def _localhost_filter(_socket) -> bool:
@@ -265,9 +258,9 @@ class ProcessLoader:
     def _map_pid_to_proc_name(self):
         for p in self._processes:
             if p.comm == 'java':
-                self._pid_to_procname[p.pid] = f'{p.comm}:{p.command_line[-1]}'
+                self._pid_to_procname[p.pid] = f'{p.comm}:{p.command_line[-1][:20]}'
             elif p.comm == 'python3.9':
-                self._pid_to_procname[p.pid] = f'{p.comm}:{p.command_line[1][:12]}'
+                self._pid_to_procname[p.pid] = f'{p.comm}:{p.command_line[1][:20]}'
             else:
                 self._pid_to_procname[p.pid] = p.comm
 
@@ -307,9 +300,24 @@ class InodeLoader:
         return inodes
 
 
-class DeviceUsedForIp:
-    def __init__(self, ip):
-        self._script = f"ip route get {ip} | head -n1 | awk '{{print $5}}'"
+class IfaceResolver:
+    def __init__(self):
+        self._device_regex = re.compile(' dev (\\w+) ')
+
+    def get_iface(self, ip):
+        out = self._run(f'/usr/sbin/ip route get {ip} | head -n1')
+        iface_name = self._device_regex.search(out)
+        if iface_name:
+            return iface_name[1]
+
+    def get_stats(self, ip):
+        dev = self.get_iface(ip)
+        return self._run(f'/usr/sbin/ip -s address show dev {dev}')
+
+    @staticmethod
+    def _run(cmd: str):
+        out = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT)
+        return out.decode('utf-8')
 
 
 class DeviceStats:
