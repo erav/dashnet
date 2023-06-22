@@ -256,7 +256,7 @@ class AttrFormatter:
 
     @classmethod
     def _padded(cls, longest, s):
-        if len(s) < longest:
+        if s and len(s) < longest:
             padding = ' ' * (longest - len(s))
             return s + padding
         return s
